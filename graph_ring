@@ -1,0 +1,144 @@
+#!/usr/bin/env escript
+%% -*- erlang -*-
+%%! -smp enable -sname graph_ring -mnesia debug verbose
+
+main([RingFile, OutFile]) ->
+		{ok, Binary} = file:read_file(RingFile), 
+		Ring = binary_to_term(Binary),
+		OwnerList = element(2,element(4,Ring)),
+
+		%io:format("~s~n", [lists:flatten(header(body(footer([]),OwnerList)))]);
+		OutString = lists:flatten([header(),body(OwnerList),footer()]),
+		try
+			file:write_file(OutFile, io_lib:format("~s~n", [OutString])),
+			io:format("Saved ~p to ~p.~n", [RingFile, OutFile])
+		catch
+			A:B ->
+				io:format("Exception ~p:~p~n",[A,B])
+		end;
+		
+main([RingFile]) ->
+	main([RingFile, lists:append(RingFile,".html")]);
+
+main(_) ->
+    usage().
+
+usage() ->
+    io:format("usage: graph_ring RingFile [OutputFile]\n"),
+    halt(1).
+
+header() -> "
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset=utf-8 />
+		<title>Ring Graph</title>
+		<script type=\"text/javascript\" src=\"http://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js\"></script>
+		<script type=\"text/javascript\" src=\"https://raw.githubusercontent.com/flot/flot/master/jquery.flot.js\"></script>
+		<script type=\"text/javascript\" src=\"https://raw.githubusercontent.com/flot/flot/master/jquery.flot.pie.js\"></script>
+	</head>
+	<body>".
+
+body(OwnerList) ->
+	BodyBegin = "
+	    <div id=\"myChart\" style=\"width:1200px; height:900px;\"></div>
+		<script>
+		$(document).ready(function(){
+	",
+	BodyEnd = "
+
+});
+		</script>",
+	[legend(OwnerList), BodyBegin, data(OwnerList), options(),  BodyEnd, informationDiv()].
+
+footer() ->
+	Footer = "
+	</body>
+</html>
+	",
+	[Footer].
+
+data(OwnerList) ->
+%	{Modulo,_} = lists:nth(2,OwnerList),
+	DataList = lists:map( 
+			fun({Partition,Node}) ->
+				<<R:8, G:8, B:8, _/binary>> = erlang:md5(atom_to_list(Node)),
+				["{owner:\"",atom_to_list(Node),"\",label:\"",integer_to_list(Partition),"\", data:",integer_to_list(1),",color:\"rgb(",integer_to_list(R),",",integer_to_list(G),",",integer_to_list(B),")\"},\n"]
+			end, OwnerList),
+	["var data = [\n",DataList,"\n];\n"].
+
+options() ->
+	"
+	$.plot(\"#myChart\", data, {
+    series: {
+        pie: {
+            innerRadius: 0.85,
+            show: true,
+            label: {
+                show: false,
+            },
+              stroke: { 
+      			width: 0.1
+  			}
+        }
+    },
+    grid: {
+        hoverable: true,
+        clickable: true
+    }
+    ,
+   legend: {
+    	show:false
+    }
+	});
+	
+	$(\"#myChart\").bind(\"plothover\", function(event, pos, obj) {
+
+				if (!obj) {
+					return;
+				}
+				$(\"#partNumber\").html(obj.series.label);
+				$(\"#partIndex\").html(obj.seriesIndex);
+				$(\"#partOwner\").html(obj.series.owner);
+				$(\"information\").css(\"background-color\", obj.series.color);
+			});
+
+	$(\"#myChart\").bind(\"plotclick\", function(event, pos, obj) {
+
+				if (!obj) {
+					return;
+				}
+				console.log(obj);
+			});
+	".
+
+legend(OwnerList) ->
+	["<table style=\"float:right\">",legendRows(OwnerList),"</table>"].
+
+legendRows(OwnerList) ->
+	NodeList=lists:usort(element(2,lists:unzip(OwnerList))),
+	NodeHtml = lists:map( 
+			fun(Node) ->
+				<<R:8, G:8, B:8, _/binary>> = erlang:md5(atom_to_list(Node)),
+				["<tr><td style=\"font-family: Helvetica, Arial, sans; font-size: .8em; height: 2.5em; color:",textColor([R,G,B]),"; background-color:rgb(",integer_to_list(R),",",integer_to_list(G),",",integer_to_list(B),")\">",atom_to_list(Node),"</tr>"]
+			end, NodeList),
+	NodeHtml.
+
+textColor(Colors) ->
+	case (lists:max(Colors) + lists:min(Colors)) / 2.0 < 128 of
+		true ->
+			"white";
+		_ ->
+			"black"
+		end.
+
+informationDiv() ->
+	"
+	<div id=\"information\" style=\" position:absolute; top:450; left:450; font-family: Helvetica,Arial, sans; border: 1px solid black; border-radius:5px; margin:5px; padding:10px; background-color:rgba(255,255,255,0.5);\">
+	<table>
+	<tr><td align=\"right\"><b>Partition Number:</b></td><td><span id=\"partNumber\"></span></td></tr>
+	<tr><td align=\"right\"><b>Partition Index:</b></td><td><span id=\"partIndex\"></span></td></tr>
+	<tr><td align=\"right\"><b>Partition Owner:</b></td><td><span id=\"partOwner\"></span></td></tr>
+	</table>
+	</div>
+	".
